@@ -3,11 +3,19 @@
 import asyncio
 from fastapi import APIRouter, HTTPException
 from app.database import get_session, SessionLocal
-from app.models import Story, Shot
+from app.models import Story, Shot, WorldBible
 from app.services.prompt_builder import build_image_prompt
 from app.services.queue import generation_queue
 
 router = APIRouter(tags=["generation"])
+
+
+def _load_world_bible_dict(session, story_id: int) -> dict | None:
+    """Load world bible as dict for prompt injection."""
+    wb = session.query(WorldBible).filter_by(story_id=story_id).first()
+    if not wb:
+        return None
+    return wb.to_full_dict()
 
 
 @router.post("/api/stories/{story_id}/build-prompts")
@@ -25,16 +33,27 @@ def build_prompts(story_id: int):
             "color_script": story.color_script,
         }
 
+        # Load world bible for consistency injection
+        world_bible = _load_world_bible_dict(session, story_id)
+
         all_shots = []
+        scene_index_map = {}  # shot_id -> scene_index
+        scene_idx = 0
         for ch in story.chapters:
             for sc in ch.scenes:
                 for sh in sc.shots:
                     all_shots.append(sh)
+                    scene_index_map[sh.id] = scene_idx
+                scene_idx += 1
 
         for i, shot in enumerate(all_shots):
             prev_data = all_shots[i - 1].to_dict() if i > 0 else None
             next_data = all_shots[i + 1].to_dict() if i < len(all_shots) - 1 else None
-            prompt = build_image_prompt(shot.to_dict(), story_data, prev_data, next_data)
+            prompt = build_image_prompt(
+                shot.to_dict(), story_data, prev_data, next_data,
+                world_bible=world_bible,
+                scene_index=scene_index_map.get(shot.id),
+            )
             shot.image_prompt = prompt
             shot.generation_status = "prompt_ready"
 
@@ -62,7 +81,8 @@ async def generate_shot(shot_id: int):
                 "visual_style": story.visual_style,
                 "music_style": story.music_style,
             }
-            prompt = build_image_prompt(shot.to_dict(), story_data)
+            world_bible = _load_world_bible_dict(session, story.id)
+            prompt = build_image_prompt(shot.to_dict(), story_data, world_bible=world_bible)
             shot.image_prompt = prompt
 
         shot.generation_status = "generating"
@@ -91,12 +111,17 @@ async def generate_all(story_id: int):
             "visual_style": story.visual_style,
             "music_style": story.music_style,
         }
+        world_bible = _load_world_bible_dict(session, story_id)
 
         all_shots = []
+        scene_index_map = {}
+        scene_idx = 0
         for ch in story.chapters:
             for sc in ch.scenes:
                 for sh in sc.shots:
                     all_shots.append(sh)
+                    scene_index_map[sh.id] = scene_idx
+                scene_idx += 1
 
         for i, shot in enumerate(all_shots):
             if shot.generation_status == "complete":
@@ -105,7 +130,11 @@ async def generate_all(story_id: int):
             if not prompt:
                 prev_data = all_shots[i - 1].to_dict() if i > 0 else None
                 next_data = all_shots[i + 1].to_dict() if i < len(all_shots) - 1 else None
-                prompt = build_image_prompt(shot.to_dict(), story_data, prev_data, next_data)
+                prompt = build_image_prompt(
+                    shot.to_dict(), story_data, prev_data, next_data,
+                    world_bible=world_bible,
+                    scene_index=scene_index_map.get(shot.id),
+                )
                 shot.image_prompt = prompt
 
             shot.generation_status = "generating"

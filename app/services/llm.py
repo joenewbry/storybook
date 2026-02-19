@@ -88,12 +88,13 @@ Return ONLY valid JSON with this exact structure:
     return json.loads(text)
 
 
-def breakdown_scene(scene_data: dict, story_context: dict) -> list[dict]:
+def breakdown_scene(scene_data: dict, story_context: dict, world_bible: dict | None = None) -> list[dict]:
     """Break a scene into shots with full visual direction.
 
     Args:
         scene_data: The scene dict (goal, conflict, outcome, source_text, etc.)
         story_context: { visual_style, music_style, color_script }
+        world_bible: Optional world bible dict with characters, locations, props
 
     Returns: list of shot dicts [{
         "description": str,
@@ -117,6 +118,31 @@ def breakdown_scene(scene_data: dict, story_context: dict) -> list[dict]:
     music_style = story_context.get("music_style", "")
     target_dur = scene_data.get("target_duration", 30)
 
+    # Build world bible context block
+    wb_context = ""
+    if world_bible:
+        wb_parts = []
+        if world_bible.get("characters"):
+            wb_parts.append("CHARACTERS (use these EXACT descriptions in shot descriptions):")
+            for c in world_bible["characters"]:
+                desc = c.get("prompt_description") or c.get("face_description", "")
+                if desc:
+                    wb_parts.append(f"  - {c['name']} ({c.get('role', '')}): {desc}")
+        if world_bible.get("locations"):
+            wb_parts.append("\nLOCATIONS (reference by name, use canonical descriptions):")
+            for l in world_bible["locations"]:
+                desc = l.get("prompt_description") or l.get("description", "")
+                if desc:
+                    wb_parts.append(f"  - {l['name']}: {desc}")
+        if world_bible.get("props"):
+            wb_parts.append("\nPROPS (reference by name when they appear):")
+            for p in world_bible["props"]:
+                desc = p.get("prompt_description") or p.get("description", "")
+                if desc:
+                    wb_parts.append(f"  - {p['name']}: {desc}")
+        if wb_parts:
+            wb_context = "\n\nWORLD BIBLE — Use these canonical references for visual consistency:\n" + "\n".join(wb_parts)
+
     prompt = f"""Break this scene into individual shots for a TikTok/YouTube Shorts video.
 
 SCENE CONTEXT:
@@ -133,7 +159,7 @@ SOURCE TEXT:
 {scene_data.get('source_text', '')}
 
 VISUAL STYLE: {visual_style}
-MUSIC STYLE: {music_style}
+MUSIC STYLE: {music_style}{wb_context}
 
 Create 4-8 shots that:
 1. Tell this scene's story visually in {target_dur} seconds total
@@ -142,11 +168,13 @@ Create 4-8 shots that:
 4. Each shot's description should be concrete and visual (what we SEE, not abstract concepts)
 5. Camera movements should serve the emotion (static for tension, dynamic for action)
 6. Transitions between shots should be intentional (cuts for urgency, dissolves for time passage)
+7. Reference characters BY NAME using their canonical visual descriptions from the World Bible
+8. Reference locations BY NAME — the image prompt system will inject full canonical descriptions
 
 Return ONLY valid JSON — an array of shot objects:
 [
     {{
-        "description": "Concrete visual description of what we see",
+        "description": "Concrete visual description of what we see — name characters and locations explicitly",
         "dialogue": "Any dialogue or voiceover text (empty string if none)",
         "shot_type": "wide|medium|close-up|extreme-close-up|over-the-shoulder|birds-eye|low-angle|dutch-angle|pov",
         "camera_movement": "static|pan|tilt|zoom|dolly|crane|tracking|handheld|steadicam",

@@ -41,4 +41,32 @@ const API = {
 
     // Composition
     composeScene(sceneId) { return this._fetch(`/api/scenes/${sceneId}/compose`, { method: 'POST' }); },
+
+    // World Bible
+    extractWorldBible(storyId) { return this._fetch(`/api/stories/${storyId}/world-bible/extract`, { method: 'POST' }); },
+    getWorldBible(storyId) { return this._fetch(`/api/stories/${storyId}/world-bible`); },
+    generateAllReferences(storyId) { return this._fetch(`/api/stories/${storyId}/world-bible/generate-all-references`, { method: 'POST' }); },
+
+    // Characters
+    updateCharacter(id, data) { return this._fetch(`/api/characters/${id}`, { method: 'PATCH', body: JSON.stringify(data) }); },
+    deleteCharacter(id) { return this._fetch(`/api/characters/${id}`, { method: 'DELETE' }); },
+    generateCharRefs(id) { return this._fetch(`/api/characters/${id}/generate-references`, { method: 'POST' }); },
+
+    // Locations
+    updateLocation(id, data) { return this._fetch(`/api/locations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }); },
+    deleteLocation(id) { return this._fetch(`/api/locations/${id}`, { method: 'DELETE' }); },
+    generateLocRefs(id) { return this._fetch(`/api/locations/${id}/generate-references`, { method: 'POST' }); },
+
+    // Props
+    updateProp(id, data) { return this._fetch(`/api/props/${id}`, { method: 'PATCH', body: JSON.stringify(data) }); },
+    deleteProp(id) { return this._fetch(`/api/props/${id}`, { method: 'DELETE' }); },
+    generatePropRefs(id) { return this._fetch(`/api/props/${id}/generate-references`, { method: 'POST' }); },
+
+    // Camera Bible
+    updateCameraBible(id, data) { return this._fetch(`/api/camera-bible/${id}`, { method: 'PATCH', body: JSON.stringify(data) }); },
+
+    // Reference Approval
+    approveCharRef(refId) { return this._fetch(`/api/character-references/${refId}/approve`, { method: 'POST' }); },
+    approveLocRef(refId) { return this._fetch(`/api/location-references/${refId}/approve`, { method: 'POST' }); },
+    approvePropRef(refId) { return this._fetch(`/api/prop-references/${refId}/approve`, { method: 'POST' }); },
 };

@@ -13,9 +13,13 @@ GENERATED_DIR = DATA_DIR / "generated"
 IMAGES_DIR = GENERATED_DIR / "images"
 VIDEOS_DIR = GENERATED_DIR / "videos"
 COMPOSED_DIR = GENERATED_DIR / "composed"
+REFERENCES_DIR = GENERATED_DIR / "references"
+CHAR_REF_DIR = REFERENCES_DIR / "characters"
+LOC_REF_DIR = REFERENCES_DIR / "locations"
+PROP_REF_DIR = REFERENCES_DIR / "props"
 
 # Ensure dirs exist
-for d in [DATA_DIR, IMAGES_DIR, VIDEOS_DIR, COMPOSED_DIR]:
+for d in [DATA_DIR, IMAGES_DIR, VIDEOS_DIR, COMPOSED_DIR, CHAR_REF_DIR, LOC_REF_DIR, PROP_REF_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = f"sqlite:///{DB_PATH}"

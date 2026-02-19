@@ -19,6 +19,7 @@
         <div class="sidebar-nav">
             <button data-view="create" class="active">+ New Story</button>
             <button data-view="timeline">Timeline</button>
+            <button data-view="world-bible">World Bible</button>
         </div>
         <div class="story-list" id="story-list"></div>
     </nav>
@@ -30,9 +31,10 @@
             <h2 id="header-title">Storybook</h2>
             <div class="header-actions">
                 <button class="btn btn-secondary btn-sm" id="btn-segment">Segment</button>
-                <button class="btn btn-secondary btn-sm" id="btn-breakdown">Break Down Shots</button>
-                <button class="btn btn-secondary btn-sm" id="btn-prompts">Build Prompts</button>
-                <button class="btn btn-primary btn-sm" id="btn-generate">Generate All</button>
+                <button class="btn btn-secondary btn-sm" id="btn-extract-world">Extract World</button>
+                <button class="btn btn-secondary btn-sm" id="btn-breakdown">Breakdown All</button>
+                <button class="btn btn-secondary btn-sm" id="btn-prompts" disabled>Build Prompts</button>
+                <button class="btn btn-primary btn-sm" id="btn-generate" disabled>Generate All</button>
             </div>
         </div>
 
@@ -102,6 +104,33 @@
                     </div>
                 </div>
             </div>
+
+            <!-- World Bible View -->
+            <div id="view-world-bible" class="view">
+                <div class="wb-container" id="wb-container">
+                    <div class="wb-empty-state" id="wb-empty">
+                        <div class="empty-state">
+                            <div class="icon">&#127760;</div>
+                            <h3>No World Bible Yet</h3>
+                            <p>Click "Extract World" in the header to analyze your story and extract characters, locations, props, and camera style.</p>
+                        </div>
+                    </div>
+                    <div class="wb-content" id="wb-content" style="display:none;">
+                        <div class="wb-tabs">
+                            <button class="wb-tab active" data-tab="characters">Characters</button>
+                            <button class="wb-tab" data-tab="locations">Locations</button>
+                            <button class="wb-tab" data-tab="props">Props</button>
+                            <button class="wb-tab" data-tab="camera">Camera</button>
+                        </div>
+                        <div class="wb-layout">
+                            <div class="wb-list" id="wb-list"></div>
+                            <div class="wb-detail" id="wb-detail">
+                                <div class="empty-state"><p>Select an entity to view details</p></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -111,6 +140,7 @@
 <script src="/static/js/state.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/ws.js"></script>
+<script src="/static/js/world-bible.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

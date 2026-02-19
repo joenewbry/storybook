@@ -11,6 +11,7 @@ from app.api.shots import router as shots_router
 from app.api.segmentation import router as segmentation_router
 from app.api.generation import router as generation_router
 from app.api.composition import router as composition_router
+from app.api.world_bible import router as world_bible_router
 from app.web.ws import ws_manager
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(segmentation_router)
     app.include_router(generation_router)
     app.include_router(composition_router)
+    app.include_router(world_bible_router)
 
     # Serve generated assets
     generated_dir = BASE_DIR / "data" / "generated"

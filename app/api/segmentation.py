@@ -1,11 +1,16 @@
 """LLM segmentation and shot breakdown endpoints."""
 
+import asyncio
 from fastapi import APIRouter, HTTPException
-from app.database import get_session
-from app.models import Story, Chapter, Scene, Shot
+from app.database import get_session, SessionLocal
+from app.models import Story, Chapter, Scene, Shot, WorldBible
 from app.services.llm import segment_story, breakdown_scene
+from app.web.ws import ws_manager
 
 router = APIRouter(tags=["segmentation"])
+
+# Track active breakdowns to prevent double-processing
+_active_breakdowns: set[int] = set()
 
 
 @router.post("/api/stories/{story_id}/segment")
@@ -66,17 +71,21 @@ def segment(story_id: int):
         session.close()
 
 
-@router.post("/api/scenes/{scene_id}/breakdown")
-def breakdown(scene_id: int):
-    """Break a scene into shots with visual direction."""
-    session = get_session()
+def _get_world_bible_context(session, story_id: int) -> dict | None:
+    """Load world bible as a dict for injection into breakdown/prompts."""
+    wb = session.query(WorldBible).filter_by(story_id=story_id).first()
+    if not wb:
+        return None
+    return wb.to_full_dict()
+
+
+def _do_breakdown_scene(scene_id: int, story_context: dict, world_bible: dict | None) -> tuple[int, list]:
+    """Run breakdown synchronously in a thread (Claude call is blocking)."""
+    session = SessionLocal()
     try:
         scene = session.query(Scene).get(scene_id)
         if not scene:
-            raise HTTPException(404, "Scene not found")
-
-        chapter = scene.chapter
-        story = chapter.story
+            return scene_id, []
 
         # Clear existing shots if re-breaking
         for sh in list(scene.shots):
@@ -84,13 +93,7 @@ def breakdown(scene_id: int):
         session.flush()
 
         scene_data = scene.to_dict()
-        story_context = {
-            "visual_style": story.visual_style,
-            "music_style": story.music_style,
-            "color_script": story.color_script,
-        }
-
-        shots_data = breakdown_scene(scene_data, story_context)
+        shots_data = breakdown_scene(scene_data, story_context, world_bible)
 
         for sh_idx, sh_data in enumerate(shots_data):
             shot = Shot(
@@ -116,73 +119,166 @@ def breakdown(scene_id: int):
             session.add(shot)
 
         session.commit()
-        return {"ok": True, "shots": len(shots_data)}
-    except HTTPException:
-        raise
+        return scene_id, shots_data
     except Exception as e:
         session.rollback()
-        raise HTTPException(500, f"Breakdown failed: {str(e)}")
+        raise e
     finally:
         session.close()
 
 
+@router.post("/api/scenes/{scene_id}/breakdown")
+async def breakdown(scene_id: int):
+    """Break a scene into shots with visual direction (async with WebSocket progress)."""
+    if scene_id in _active_breakdowns:
+        return {"ok": True, "message": "Already breaking down this scene"}
+
+    # Validate scene exists and get story context
+    session = get_session()
+    try:
+        scene = session.query(Scene).get(scene_id)
+        if not scene:
+            raise HTTPException(404, "Scene not found")
+
+        chapter = scene.chapter
+        story = chapter.story
+        story_context = {
+            "visual_style": story.visual_style,
+            "music_style": story.music_style,
+            "color_script": story.color_script,
+        }
+        story_id = story.id
+    finally:
+        session.close()
+
+    # Load world bible context
+    session2 = get_session()
+    try:
+        world_bible = _get_world_bible_context(session2, story_id)
+    finally:
+        session2.close()
+
+    _active_breakdowns.add(scene_id)
+
+    async def _run():
+        try:
+            await ws_manager.broadcast({
+                "type": "breakdown_progress",
+                "scene_id": scene_id,
+                "status": "started",
+            })
+
+            loop = asyncio.get_event_loop()
+            _, shots_data = await loop.run_in_executor(
+                None, _do_breakdown_scene, scene_id, story_context, world_bible
+            )
+
+            await ws_manager.broadcast({
+                "type": "breakdown_progress",
+                "scene_id": scene_id,
+                "status": "complete",
+                "shot_count": len(shots_data),
+            })
+        except Exception as e:
+            await ws_manager.broadcast({
+                "type": "breakdown_progress",
+                "scene_id": scene_id,
+                "status": "error",
+                "error": str(e),
+            })
+        finally:
+            _active_breakdowns.discard(scene_id)
+
+    asyncio.create_task(_run())
+    return {"ok": True, "message": "Breakdown started", "scene_id": scene_id}
+
+
 @router.post("/api/stories/{story_id}/breakdown-all")
-def breakdown_all(story_id: int):
-    """Break down all scenes in a story into shots."""
+async def breakdown_all(story_id: int):
+    """Break down all scenes in a story into shots (async with WebSocket progress)."""
     session = get_session()
     try:
         story = session.query(Story).get(story_id)
         if not story:
             raise HTTPException(404, "Story not found")
 
-        total_shots = 0
         story_context = {
             "visual_style": story.visual_style,
             "music_style": story.music_style,
             "color_script": story.color_script,
         }
 
+        # Collect scene IDs that need breakdown
+        scenes_to_breakdown = []
         for chapter in story.chapters:
             for scene in chapter.scenes:
-                # Skip if already has shots
-                if scene.shots:
-                    total_shots += len(scene.shots)
-                    continue
-
-                scene_data = scene.to_dict()
-                shots_data = breakdown_scene(scene_data, story_context)
-
-                for sh_idx, sh_data in enumerate(shots_data):
-                    shot = Shot(
-                        scene_id=scene.id,
-                        order_index=sh_idx,
-                        description=sh_data.get("description", ""),
-                        dialogue=sh_data.get("dialogue", ""),
-                        shot_type=sh_data.get("shot_type", "medium"),
-                        camera_movement=sh_data.get("camera_movement", "static"),
-                        camera_movement_detail=sh_data.get("camera_movement_detail", ""),
-                        color_palette=sh_data.get("color_palette", []),
-                        color_mood=sh_data.get("color_mood", ""),
-                        lighting=sh_data.get("lighting", ""),
-                        music_tempo=sh_data.get("music_tempo", ""),
-                        music_mood=sh_data.get("music_mood", ""),
-                        music_instruments=sh_data.get("music_instruments", ""),
-                        music_note=sh_data.get("music_note", ""),
-                        duration=sh_data.get("duration", 4.0),
-                        transition_type=sh_data.get("transition_type", "cut"),
-                        transition_duration=sh_data.get("transition_duration", 0.5),
-                        generation_status="pending",
-                    )
-                    session.add(shot)
-                    total_shots += 1
-
-        story.status = "broken_down"
-        session.commit()
-        return {"ok": True, "total_shots": total_shots}
-    except HTTPException:
-        raise
-    except Exception as e:
-        session.rollback()
-        raise HTTPException(500, f"Breakdown failed: {str(e)}")
+                if not scene.shots:
+                    scenes_to_breakdown.append(scene.id)
     finally:
         session.close()
+
+    if not scenes_to_breakdown:
+        return {"ok": True, "message": "All scenes already broken down", "total_scenes": 0}
+
+    # Load world bible
+    session2 = get_session()
+    try:
+        world_bible = _get_world_bible_context(session2, story_id)
+    finally:
+        session2.close()
+
+    async def _run():
+        loop = asyncio.get_event_loop()
+        total_shots = 0
+
+        for scene_id in scenes_to_breakdown:
+            if scene_id in _active_breakdowns:
+                continue
+            _active_breakdowns.add(scene_id)
+
+            try:
+                await ws_manager.broadcast({
+                    "type": "breakdown_progress",
+                    "scene_id": scene_id,
+                    "status": "started",
+                })
+
+                _, shots_data = await loop.run_in_executor(
+                    None, _do_breakdown_scene, scene_id, story_context, world_bible
+                )
+                total_shots += len(shots_data)
+
+                await ws_manager.broadcast({
+                    "type": "breakdown_progress",
+                    "scene_id": scene_id,
+                    "status": "complete",
+                    "shot_count": len(shots_data),
+                })
+            except Exception as e:
+                await ws_manager.broadcast({
+                    "type": "breakdown_progress",
+                    "scene_id": scene_id,
+                    "status": "error",
+                    "error": str(e),
+                })
+            finally:
+                _active_breakdowns.discard(scene_id)
+
+        # Update story status
+        s = SessionLocal()
+        try:
+            st = s.query(Story).get(story_id)
+            if st:
+                st.status = "broken_down"
+                s.commit()
+        finally:
+            s.close()
+
+        await ws_manager.broadcast({
+            "type": "breakdown_all_complete",
+            "story_id": story_id,
+            "total_shots": total_shots,
+        })
+
+    asyncio.create_task(_run())
+    return {"ok": True, "message": "Breakdown started", "total_scenes": len(scenes_to_breakdown)}

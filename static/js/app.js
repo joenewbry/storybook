@@ -23,6 +23,12 @@ function showView(name) {
     document.querySelectorAll('.sidebar-nav button').forEach(b => {
         b.classList.toggle('active', b.dataset.view === name);
     });
+
+    // Load world bible data when switching to that view
+    if (name === 'world-bible') {
+        const story = State.get('currentStory');
+        if (story) WorldBibleUI.loadWorldBible(story.id);
+    }
 }
 
 // ===== Story List (sidebar) =====
@@ -63,6 +69,7 @@ async function selectStory(id) {
         showView('timeline');
         renderTimeline();
         updateHeader();
+        updateHeaderButtons();
     } catch(e) {
         toast('Failed to load story: ' + e.message, 'error');
     } finally {
@@ -74,6 +81,35 @@ function updateHeader() {
     const story = State.get('currentStory');
     const el = document.getElementById('header-title');
     el.textContent = story ? story.title : 'Storybook';
+}
+
+function updateHeaderButtons() {
+    const story = State.get('currentStory');
+    const btnPrompts = document.getElementById('btn-prompts');
+    const btnGenerate = document.getElementById('btn-generate');
+
+    if (!story) {
+        btnPrompts.disabled = true;
+        btnGenerate.disabled = true;
+        return;
+    }
+
+    // Count total shots across story
+    let totalShots = 0;
+    let shotsWithPrompts = 0;
+    for (const ch of (story.chapters || [])) {
+        for (const sc of ch.scenes) {
+            for (const sh of (sc.shots || [])) {
+                totalShots++;
+                if (sh.image_prompt) shotsWithPrompts++;
+            }
+        }
+    }
+
+    // Build Prompts: enabled when shots exist
+    btnPrompts.disabled = totalShots === 0;
+    // Generate All: enabled when shots have prompts
+    btnGenerate.disabled = shotsWithPrompts === 0;
 }
 
 // ===== Create Story =====
@@ -118,7 +154,6 @@ function renderSourceStrip(story) {
         el.innerHTML = `<div style="color:var(--text-dim)">No chapters yet. Click <strong>Segment</strong> to analyze the story.</div>`;
         return;
     }
-    // Show source text with scene markers
     let html = '';
     for (const ch of story.chapters) {
         html += `<strong style="color:var(--accent)">[${ch.title || 'Chapter ' + (ch.order_index + 1)}]</strong>\n`;
@@ -144,24 +179,52 @@ function renderSceneCards(story) {
     if (!story || !story.chapters) { el.innerHTML = ''; return; }
 
     const selectedScene = State.get('selectedScene');
+    const breakingDown = State.get('breakingDownScenes');
     const allScenes = story.chapters.flatMap(ch => ch.scenes);
 
     el.innerHTML = allScenes.map(sc => {
-        const width = Math.max(120, sc.target_duration * 4);
+        const width = Math.max(180, sc.target_duration * 5);
         const bgGrad = getEmotionGradient(sc.opening_emotion, sc.closing_emotion);
         const intensityPct = Math.round((sc.intensity || 0.5) * 100);
         const intensityColor = sc.intensity > 0.7 ? 'var(--red)' : sc.intensity > 0.4 ? 'var(--orange)' : 'var(--green)';
+
+        // Breakdown status
+        const isBreakingDown = breakingDown.has(sc.id);
+        const hasShots = sc.shot_count > 0;
+        const statusClass = isBreakingDown ? 'breaking-down' : hasShots ? 'broken-down' : 'not-broken-down';
+
+        // Scene type badge
+        const typeBadge = sc.scene_type === 'sequel'
+            ? '<span class="scene-type-badge sequel">Sequel</span>'
+            : '<span class="scene-type-badge scene">Scene</span>';
+
+        // Shot status display
+        const shotStatus = isBreakingDown
+            ? '<span class="shot-status breaking"><span class="spinner-sm"></span> Breaking down...</span>'
+            : hasShots
+                ? `<span class="shot-status has-shots">${sc.shot_count} shots</span>`
+                : `<span class="shot-status no-shots">No shots</span>`;
+
+        // Per-scene breakdown button (only when no shots and not breaking down)
+        const breakdownBtn = !hasShots && !isBreakingDown
+            ? `<button class="btn btn-sm scene-breakdown-btn" onclick="event.stopPropagation(); breakdownScene(${sc.id})">Break Down</button>`
+            : '';
+
         return `
-        <div class="scene-card ${selectedScene === sc.id ? 'selected' : ''}"
+        <div class="scene-card ${statusClass} ${selectedScene === sc.id ? 'selected' : ''}"
              data-id="${sc.id}" style="width:${width}px; background:${bgGrad}">
-            <div class="scene-num">${sc.scene_type === 'sequel' ? 'Sequel' : 'Scene'} ${sc.order_index + 1}</div>
-            <div class="scene-goal">${sc.goal || sc.emotion || 'No goal set'}</div>
+            <div class="scene-card-top">
+                ${typeBadge}
+                <span class="scene-num">S${sc.order_index + 1}</span>
+            </div>
+            <div class="scene-goal">${esc(sc.goal || sc.emotion || 'No goal set')}</div>
             <div class="scene-meta">
                 <span>${sc.target_duration}s</span>
-                <span>${sc.shot_count} shots</span>
+                ${shotStatus}
             </div>
             ${sc.opening_emotion ? `<span class="emotion-badge">${sc.opening_emotion} → ${sc.closing_emotion || '?'}</span>` : ''}
             <div class="intensity-bar"><div class="fill" style="width:${intensityPct}%;background:${intensityColor}"></div></div>
+            ${breakdownBtn}
         </div>`;
     }).join('');
 
@@ -197,6 +260,7 @@ function renderShotCards() {
     const story = State.get('currentStory');
     const selectedScene = State.get('selectedScene');
     const selectedShot = State.get('selectedShot');
+    const breakingDown = State.get('breakingDownScenes');
 
     if (!story || !selectedScene) {
         el.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:12px;">Select a scene to view shots</div>';
@@ -211,8 +275,19 @@ function renderShotCards() {
         }
         if (scene) break;
     }
+
+    // Show loading spinner if scene is being broken down
+    if (scene && (!scene.shots || scene.shots.length === 0) && breakingDown.has(selectedScene)) {
+        el.innerHTML = `<div class="breakdown-loading">
+            <div class="spinner"></div>
+            <div class="breakdown-loading-text">Breaking down scene into shots...</div>
+            <div class="breakdown-loading-sub">Claude is analyzing the scene for visual direction, camera angles, and color scripting.</div>
+        </div>`;
+        return;
+    }
+
     if (!scene || !scene.shots || scene.shots.length === 0) {
-        el.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:12px;">No shots yet. Click <strong>Break Down Shots</strong>.</div>';
+        el.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:12px;">No shots yet. Click <strong>Break Down</strong> on the scene card or use <strong>Breakdown All</strong>.</div>';
         return;
     }
 
@@ -244,7 +319,6 @@ function renderShotCards() {
             renderShotCards();
             renderDetailPanel();
         };
-        // Drag and drop for reordering
         card.ondragstart = (e) => {
             e.dataTransfer.setData('text/plain', card.dataset.id);
             card.classList.add('dragging');
@@ -258,7 +332,6 @@ function renderShotCards() {
             const fromId = parseInt(e.dataTransfer.getData('text/plain'));
             const toId = parseInt(card.dataset.id);
             if (fromId === toId) return;
-            // Get new order
             const cards = [...el.querySelectorAll('.shot-card')];
             const ids = cards.map(c => parseInt(c.dataset.id));
             const fromIdx = ids.indexOf(fromId);
@@ -279,12 +352,10 @@ function renderDetailPanel() {
     const selectedScene = State.get('selectedScene');
     const selectedShot = State.get('selectedShot');
 
-    // If a shot is selected, show shot detail
     if (selectedShot && story) {
         const shot = findShot(story, selectedShot);
         if (shot) { renderShotDetail(el, shot); return; }
     }
-    // If a scene is selected, show scene detail
     if (selectedScene && story) {
         const scene = findScene(story, selectedScene);
         if (scene) { renderSceneDetail(el, scene); return; }
@@ -310,6 +381,9 @@ function findShot(story, id) {
 }
 
 function renderSceneDetail(el, scene) {
+    const breakingDown = State.get('breakingDownScenes');
+    const isBreaking = breakingDown.has(scene.id);
+
     el.innerHTML = `
     <div class="detail-content">
         <div class="detail-left">
@@ -331,7 +405,9 @@ function renderSceneDetail(el, scene) {
             <h3>Source Text</h3>
             <div style="background:var(--surface2);padding:12px;border-radius:var(--radius);font-size:13px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap;">${esc(scene.source_text)}</div>
             <div style="margin-top:12px;" class="btn-group">
-                <button class="btn btn-secondary btn-sm" onclick="breakdownScene(${scene.id})">Break Down Shots</button>
+                <button class="btn btn-secondary btn-sm" onclick="breakdownScene(${scene.id})" ${isBreaking ? 'disabled' : ''}>
+                    ${isBreaking ? '<span class="spinner-sm"></span> Breaking Down...' : 'Break Down Shots'}
+                </button>
             </div>
         </div>
     </div>`;
@@ -397,7 +473,6 @@ function renderShotDetail(el, shot) {
         </div>
     </div>`;
 
-    // Auto-save on field blur
     el.querySelectorAll('[data-field]').forEach(input => {
         input.onblur = () => saveShotEdits(shot.id);
     });
@@ -423,29 +498,59 @@ async function segmentStory() {
 }
 
 async function breakdownScene(sceneId) {
+    const breakingDown = State.get('breakingDownScenes');
+    if (breakingDown.has(sceneId)) return; // Already breaking down
+
+    breakingDown.add(sceneId);
+    State.set('breakingDownScenes', breakingDown);
+    renderSceneCards();
+    renderShotCards();
+
     try {
-        toast('Breaking down shots...', 'info');
+        toast('Breaking down scene...', 'info');
         await API.breakdownScene(sceneId);
-        toast('Shot breakdown complete!', 'success');
-        await refreshCurrentStory();
+        // Actual completion comes via WebSocket
     } catch(e) {
+        breakingDown.delete(sceneId);
+        State.set('breakingDownScenes', breakingDown);
         toast('Breakdown failed: ' + e.message, 'error');
+        renderSceneCards();
+        renderShotCards();
     }
 }
 
 async function breakdownAll() {
     const story = State.get('currentStory');
     if (!story) return;
+
+    // Mark all scenes without shots as breaking down
+    const breakingDown = State.get('breakingDownScenes');
+    for (const ch of (story.chapters || [])) {
+        for (const sc of ch.scenes) {
+            if (sc.shot_count === 0) breakingDown.add(sc.id);
+        }
+    }
+    State.set('breakingDownScenes', breakingDown);
+    renderSceneCards();
+
     try {
-        State.set('loading', true);
         toast('Breaking down all scenes...', 'info');
         await API.breakdownAll(story.id);
-        toast('All breakdowns complete!', 'success');
-        await refreshCurrentStory();
+        // Actual completion comes via WebSocket
     } catch(e) {
         toast('Breakdown failed: ' + e.message, 'error');
-    } finally {
-        State.set('loading', false);
+    }
+}
+
+async function extractWorld() {
+    const story = State.get('currentStory');
+    if (!story) return;
+    try {
+        toast('Extracting world bible...', 'info');
+        await API.extractWorldBible(story.id);
+        // Completion comes via WebSocket
+    } catch(e) {
+        toast('Extraction failed: ' + e.message, 'error');
     }
 }
 
@@ -466,8 +571,6 @@ async function generateShot(shotId) {
     try {
         toast('Generating image...', 'info');
         await API.generateShot(shotId);
-        toast('Image generated!', 'success');
-        await refreshCurrentStory();
     } catch(e) {
         toast('Generation failed: ' + e.message, 'error');
     }
@@ -480,8 +583,6 @@ async function generateAll() {
         State.set('loading', true);
         toast('Generating all images...', 'info');
         await API.generateAll(story.id);
-        toast('All images generated!', 'success');
-        await refreshCurrentStory();
     } catch(e) {
         toast('Generation failed: ' + e.message, 'error');
     } finally {
@@ -497,7 +598,6 @@ async function saveShotEdits(shotId) {
         if (input.type === 'number') val = parseFloat(val);
         data[input.dataset.field] = val;
     });
-    // Gather palette colors
     const paletteInputs = panel.querySelectorAll('[data-palette-idx]');
     if (paletteInputs.length > 0) {
         data.color_palette = [...paletteInputs].map(i => i.value);
@@ -515,13 +615,13 @@ async function refreshCurrentStory() {
     const updated = await API.getStoryFull(story.id);
     State.set('currentStory', updated);
     renderTimeline();
+    updateHeaderButtons();
     await loadStories();
 }
 
 // ===== WebSocket handler =====
 function handleWSMessage(data) {
     if (data.type === 'shot_progress') {
-        // Update shot status in-place
         const story = State.get('currentStory');
         if (!story) return;
         const shot = findShot(story, data.shot_id);
@@ -534,7 +634,30 @@ function handleWSMessage(data) {
     } else if (data.type === 'generation_complete') {
         toast('Generation batch complete!', 'success');
         refreshCurrentStory();
+    } else if (data.type === 'breakdown_progress') {
+        const breakingDown = State.get('breakingDownScenes');
+        if (data.status === 'started') {
+            breakingDown.add(data.scene_id);
+        } else if (data.status === 'complete') {
+            breakingDown.delete(data.scene_id);
+            toast(`Scene breakdown complete! ${data.shot_count} shots created.`, 'success');
+            refreshCurrentStory();
+        } else if (data.status === 'error') {
+            breakingDown.delete(data.scene_id);
+            toast('Breakdown error: ' + (data.error || 'Unknown'), 'error');
+        }
+        State.set('breakingDownScenes', breakingDown);
+        renderSceneCards();
+        if (State.get('selectedScene') === data.scene_id) {
+            renderShotCards();
+        }
+    } else if (data.type === 'breakdown_all_complete') {
+        toast(`All breakdowns complete! ${data.total_shots} total shots.`, 'success');
+        refreshCurrentStory();
     }
+
+    // Delegate to WorldBibleUI
+    WorldBibleUI.handleWSMessage(data);
 }
 
 // ===== Init =====
@@ -549,6 +672,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Header action buttons
     document.getElementById('btn-segment').onclick = segmentStory;
+    document.getElementById('btn-extract-world').onclick = extractWorld;
     document.getElementById('btn-breakdown').onclick = breakdownAll;
     document.getElementById('btn-prompts').onclick = buildPrompts;
     document.getElementById('btn-generate').onclick = generateAll;
@@ -556,6 +680,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // WebSocket
     WS.connect();
     WS.onMessage(handleWSMessage);
+
+    // World Bible UI
+    WorldBibleUI.init();
 
     // Load stories
     loadStories();

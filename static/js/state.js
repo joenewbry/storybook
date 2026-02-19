@@ -7,8 +7,12 @@ const State = {
         currentStory: null,     // full story with chapters/scenes/shots
         selectedScene: null,    // scene id
         selectedShot: null,     // shot id
-        view: 'create',         // 'create' | 'timeline'
+        view: 'create',         // 'create' | 'timeline' | 'world-bible'
         loading: false,
+        breakingDownScenes: new Set(),  // scene IDs currently being broken down
+        worldBible: null,       // full world bible data
+        selectedEntity: null,   // {type: 'character'|'location'|'prop', id: int}
+        wbTab: 'characters',    // 'characters' | 'locations' | 'props' | 'camera'
     },
     _listeners: [],
 
