@@ -23,4 +23,4 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
 
-PORT = int(os.getenv("PORT", "8090"))
+PORT = int(os.getenv("PORT", "8094"))
