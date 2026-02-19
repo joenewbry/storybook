@@ -1,0 +1,7 @@
+[Unit]
+Description=Storybook auto-pull from GitHub
+
+[Service]
+Type=oneshot
+User=prometheus
+ExecStart=/ssd/storybook/deploy/auto-pull.sh

@@ -1,0 +1,15 @@
+[Unit]
+Description=Storybook - Story to Shorts Pipeline
+After=network.target
+
+[Service]
+Type=simple
+User=prometheus
+WorkingDirectory=/ssd/storybook
+ExecStart=/ssd/storybook/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=5
+Environment=PATH=/ssd/storybook/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

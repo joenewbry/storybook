@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Storybook</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>Storybook</h1>
+            <p>Story-to-Shorts Pipeline</p>
+        </div>
+        <div class="sidebar-nav">
+            <button data-view="create" class="active">+ New Story</button>
+            <button data-view="timeline">Timeline</button>
+        </div>
+        <div class="story-list" id="story-list"></div>
+    </nav>
+
+    <!-- Main -->
+    <div class="main">
+        <!-- Header -->
+        <div class="header">
+            <h2 id="header-title">Storybook</h2>
+            <div class="header-actions">
+                <button class="btn btn-secondary btn-sm" id="btn-segment">Segment</button>
+                <button class="btn btn-secondary btn-sm" id="btn-breakdown">Break Down Shots</button>
+                <button class="btn btn-secondary btn-sm" id="btn-prompts">Build Prompts</button>
+                <button class="btn btn-primary btn-sm" id="btn-generate">Generate All</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Create Story View -->
+            <div id="view-create" class="view active">
+                <div style="max-width:700px;">
+                    <h3 style="margin-bottom:16px;">Create New Story</h3>
+                    <form id="create-story-form">
+                        <div class="form-group">
+                            <label>Title</label>
+                            <input name="title" placeholder="e.g. Frozen Head of the P.O.T.U.S. — Chapter 1">
+                        </div>
+                        <div class="form-group">
+                            <label>Story Text</label>
+                            <textarea name="raw_text" placeholder="Paste your story text here..." rows="12"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Visual Style (optional)</label>
+                            <textarea name="visual_style" placeholder="e.g. Dark cinematic sci-fi, neon-lit corridors, Blade Runner meets political thriller. High contrast lighting, deep shadows. Characters shown from dramatic angles." rows="3"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Music Style (optional)</label>
+                            <input name="music_style" placeholder="e.g. Tense electronic ambient, Hans Zimmer-style percussive hits">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Create Story</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Timeline View -->
+            <div id="view-timeline" class="view">
+                <div class="timeline">
+                    <!-- Lane 1: Source Text -->
+                    <div class="lane">
+                        <div class="lane-header">Source Text</div>
+                        <div class="lane-scroll">
+                            <div class="source-strip" id="source-strip">
+                                <div style="color:var(--text-dim)">No story loaded</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lane 2: Scene Cards -->
+                    <div class="lane">
+                        <div class="lane-header">Scenes</div>
+                        <div class="lane-scroll">
+                            <div class="scene-cards" id="scene-cards"></div>
+                        </div>
+                    </div>
+
+                    <!-- Lane 3: Shot Cards -->
+                    <div class="lane">
+                        <div class="lane-header">Shots</div>
+                        <div class="lane-scroll">
+                            <div class="shot-cards" id="shot-cards"></div>
+                        </div>
+                    </div>
+
+                    <!-- Detail Panel -->
+                    <div class="detail-panel" id="detail-panel">
+                        <div class="empty-state">
+                            <div class="icon">&#9661;</div>
+                            <h3>Select a scene or shot</h3>
+                            <p>Click on a scene card to view its details, or select a shot to edit visual direction and prompts.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/state.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/ws.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
