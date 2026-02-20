@@ -127,17 +127,21 @@ class Shot(Base):
     transition_duration = Column(Float, default=0.5)
     image_prompt = Column(Text, default="")
     generation_status = Column(String(50), default="pending")  # pending, prompt_ready, generating, complete, error
+    video_prompt = Column(Text, default="")
+    video_generation_status = Column(String(50), default="pending")  # pending, generating, complete, error
 
     scene = relationship("Scene", back_populates="shots")
     assets = relationship("Asset", back_populates="shot", cascade="all, delete-orphan")
 
     def to_dict(self):
-        current_asset = None
+        current_image = None
+        current_video = None
         if self.assets:
             for a in self.assets:
-                if a.is_current and a.asset_type == "image":
-                    current_asset = a.to_dict()
-                    break
+                if a.is_current and a.asset_type == "image" and not current_image:
+                    current_image = a.to_dict()
+                if a.is_current and a.asset_type == "video" and not current_video:
+                    current_video = a.to_dict()
         return {
             "id": self.id, "scene_id": self.scene_id,
             "order_index": self.order_index, "description": self.description,
@@ -153,7 +157,10 @@ class Shot(Base):
             "transition_duration": self.transition_duration,
             "image_prompt": self.image_prompt,
             "generation_status": self.generation_status,
-            "current_image": current_asset,
+            "video_prompt": self.video_prompt,
+            "video_generation_status": self.video_generation_status,
+            "current_image": current_image,
+            "current_video": current_video,
         }
 
 

@@ -39,6 +39,11 @@ const API = {
     generateAll(storyId) { return this._fetch(`/api/stories/${storyId}/generate-all`, { method: 'POST' }); },
     buildPrompts(storyId) { return this._fetch(`/api/stories/${storyId}/build-prompts`, { method: 'POST' }); },
 
+    // Video Generation
+    generateShotVideo(shotId) { return this._fetch(`/api/shots/${shotId}/generate-video`, { method: 'POST' }); },
+    generateSceneVideos(sceneId) { return this._fetch(`/api/scenes/${sceneId}/generate-video-sequence`, { method: 'POST' }); },
+    generateAllVideos(storyId) { return this._fetch(`/api/stories/${storyId}/generate-all-videos`, { method: 'POST' }); },
+
     // Composition
     composeScene(sceneId) { return this._fetch(`/api/scenes/${sceneId}/compose`, { method: 'POST' }); },
 

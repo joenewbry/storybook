@@ -124,6 +124,70 @@ def build_image_prompt(
     return " ".join(parts)
 
 
+def build_video_prompt(
+    shot: dict,
+    story: dict,
+    is_continuation: bool = False,
+    world_bible: dict | None = None,
+) -> str:
+    """Build a Grok Imagine Video prompt from shot metadata.
+
+    Shorter than image prompts. Emphasizes camera movement and motion.
+    For continuation shots, prepends a transition instruction.
+    """
+    parts = []
+    wb = world_bible or {}
+
+    # Continuation prefix
+    if is_continuation:
+        parts.append("Camera continues from previous frame. Smooth transition to:")
+
+    # Camera bible prefix (abbreviated for video)
+    camera_bible = wb.get("camera_bible")
+    if camera_bible and camera_bible.get("prompt_prefix"):
+        # Take first sentence only for video
+        prefix = camera_bible["prompt_prefix"].split(".")[0].strip()
+        if prefix:
+            parts.append(prefix + ".")
+
+    # Global style (abbreviated)
+    style = wb.get("global_style_prompt") or story.get("visual_style", "")
+    if style:
+        # First sentence only
+        parts.append(style.split(".")[0].strip() + ".")
+
+    # Scene description
+    desc = shot.get("description", "")
+    if desc:
+        parts.append(desc)
+
+    # Camera movement (critical for video)
+    camera = shot.get("camera_movement", "")
+    camera_detail = shot.get("camera_movement_detail", "")
+    if camera:
+        if camera_detail:
+            parts.append(f"Camera: {camera} — {camera_detail}.")
+        elif camera != "static":
+            parts.append(f"Camera: {camera}.")
+        else:
+            parts.append("Camera: locked off, static shot.")
+
+    # Shot type
+    shot_type = shot.get("shot_type", "")
+    if shot_type:
+        parts.append(f"{shot_type} shot.")
+
+    # Color mood
+    color_mood = shot.get("color_mood", "")
+    if color_mood:
+        parts.append(f"{color_mood} tones.")
+
+    # Mandatory suffix
+    parts.append("No text, no UI. Vertical 9:16.")
+
+    return " ".join(parts)
+
+
 def build_all_prompts(story_data: dict, world_bible: dict | None = None) -> list[dict]:
     """Build prompts for all shots in a story.
 

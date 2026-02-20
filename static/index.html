@@ -35,6 +35,7 @@
                 <button class="btn btn-secondary btn-sm" id="btn-breakdown">Breakdown All</button>
                 <button class="btn btn-secondary btn-sm" id="btn-prompts" disabled>Build Prompts</button>
                 <button class="btn btn-primary btn-sm" id="btn-generate" disabled>Generate All</button>
+                <button class="btn btn-secondary btn-sm" id="btn-generate-videos" disabled>Generate Videos</button>
             </div>
         </div>
 
@@ -69,7 +70,7 @@
             <div id="view-timeline" class="view">
                 <div class="timeline">
                     <!-- Lane 1: Source Text -->
-                    <div class="lane">
+                    <div class="lane" id="lane-source">
                         <div class="lane-header">Source Text</div>
                         <div class="lane-scroll">
                             <div class="source-strip" id="source-strip">
@@ -78,21 +79,27 @@
                         </div>
                     </div>
 
+                    <div class="resize-handle" data-above="lane-source" data-below="lane-scenes"></div>
+
                     <!-- Lane 2: Scene Cards -->
-                    <div class="lane">
+                    <div class="lane" id="lane-scenes">
                         <div class="lane-header">Scenes</div>
                         <div class="lane-scroll">
                             <div class="scene-cards" id="scene-cards"></div>
                         </div>
                     </div>
 
+                    <div class="resize-handle" data-above="lane-scenes" data-below="lane-shots"></div>
+
                     <!-- Lane 3: Shot Cards -->
-                    <div class="lane">
+                    <div class="lane" id="lane-shots">
                         <div class="lane-header">Shots</div>
                         <div class="lane-scroll">
                             <div class="shot-cards" id="shot-cards"></div>
                         </div>
                     </div>
+
+                    <div class="resize-handle" data-above="lane-shots" data-below="detail-panel"></div>
 
                     <!-- Detail Panel -->
                     <div class="detail-panel" id="detail-panel">

@@ -16,3 +16,18 @@ def get_session() -> Session:
 def init_db():
     from app.models import Base
     Base.metadata.create_all(engine)
+    _migrate_add_video_columns()
+
+
+def _migrate_add_video_columns():
+    """Add video columns to shots table if they don't exist (SQLite migration)."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Check existing columns
+        result = conn.execute(text("PRAGMA table_info(shots)"))
+        existing = {row[1] for row in result}
+        if "video_prompt" not in existing:
+            conn.execute(text("ALTER TABLE shots ADD COLUMN video_prompt TEXT DEFAULT ''"))
+        if "video_generation_status" not in existing:
+            conn.execute(text("ALTER TABLE shots ADD COLUMN video_generation_status VARCHAR(50) DEFAULT 'pending'"))
+        conn.commit()

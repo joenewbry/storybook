@@ -87,21 +87,25 @@ function updateHeaderButtons() {
     const story = State.get('currentStory');
     const btnPrompts = document.getElementById('btn-prompts');
     const btnGenerate = document.getElementById('btn-generate');
+    const btnGenerateVideos = document.getElementById('btn-generate-videos');
 
     if (!story) {
         btnPrompts.disabled = true;
         btnGenerate.disabled = true;
+        btnGenerateVideos.disabled = true;
         return;
     }
 
     // Count total shots across story
     let totalShots = 0;
     let shotsWithPrompts = 0;
+    let shotsWithImages = 0;
     for (const ch of (story.chapters || [])) {
         for (const sc of ch.scenes) {
             for (const sh of (sc.shots || [])) {
                 totalShots++;
                 if (sh.image_prompt) shotsWithPrompts++;
+                if (sh.current_image && sh.current_image.file_path) shotsWithImages++;
             }
         }
     }
@@ -110,6 +114,8 @@ function updateHeaderButtons() {
     btnPrompts.disabled = totalShots === 0;
     // Generate All: enabled when shots have prompts
     btnGenerate.disabled = shotsWithPrompts === 0;
+    // Generate Videos: enabled when shots have images
+    btnGenerateVideos.disabled = shotsWithImages === 0;
 }
 
 // ===== Create Story =====
@@ -293,18 +299,22 @@ function renderShotCards() {
 
     el.innerHTML = scene.shots.map(sh => {
         const hasImage = sh.current_image && sh.current_image.file_path;
+        const hasVideo = sh.current_video && sh.current_video.file_path;
         const imgSrc = hasImage ? `/generated/${sh.current_image.file_path}` : '';
         const swatches = (sh.color_palette || []).map(c => `<div class="swatch" style="background:${c}"></div>`).join('');
         const transColor = { dissolve: 'var(--blue)', fade: 'var(--text-dim)', wipe: 'var(--orange)', cut: 'transparent' };
+        const vidStatus = sh.video_generation_status || 'pending';
         return `
         <div class="shot-card ${selectedShot === sh.id ? 'selected' : ''}" data-id="${sh.id}" draggable="true">
             <div class="thumb">
                 ${hasImage ? `<img src="${imgSrc}" alt="Shot ${sh.order_index + 1}">` : '&#9633;'}
                 <div class="duration-badge">${sh.duration}s</div>
                 <div class="status-dot ${sh.generation_status}"></div>
+                <button class="shot-card-gen-btn" onclick="event.stopPropagation(); generateShot(${sh.id})" title="Generate Image">&#9654;</button>
+                ${hasImage ? `<button class="shot-card-vid-btn ${vidStatus === 'generating' ? 'generating' : ''}" onclick="event.stopPropagation(); generateShotVideo(${sh.id})" title="Generate Video">&#9654;&#9654;</button>` : ''}
             </div>
             <div class="shot-info">
-                <div class="shot-type">${sh.shot_type || 'shot'} ${sh.order_index + 1}</div>
+                <div class="shot-type">${sh.shot_type || 'shot'} ${sh.order_index + 1}${hasVideo ? ' <span style="color:var(--green)">&#9658;</span>' : ''}</div>
                 <div class="shot-desc">${sh.description || ''}</div>
                 <div class="color-swatches">${swatches}</div>
             </div>
@@ -415,7 +425,9 @@ function renderSceneDetail(el, scene) {
 
 function renderShotDetail(el, shot) {
     const hasImage = shot.current_image && shot.current_image.file_path;
+    const hasVideo = shot.current_video && shot.current_video.file_path;
     const imgSrc = hasImage ? `/generated/${shot.current_image.file_path}` : '';
+    const vidSrc = hasVideo ? `/generated/${shot.current_video.file_path}` : '';
     const paletteHtml = (shot.color_palette || []).map((c, i) =>
         `<input type="color" value="${c}" data-palette-idx="${i}" style="width:30px;height:24px;border:none;padding:0;cursor:pointer;">`
     ).join(' ');
@@ -469,7 +481,20 @@ function renderShotDetail(el, shot) {
                 <button class="btn btn-primary btn-sm" onclick="generateShot(${shot.id})">Generate Image</button>
                 <button class="btn btn-secondary btn-sm" onclick="saveShotEdits(${shot.id})">Save Changes</button>
             </div>
-            <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Status: <strong>${shot.generation_status}</strong></div>
+            <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Image status: <strong>${shot.generation_status}</strong></div>
+
+            <h3 style="margin-top:20px;">Video</h3>
+            <div class="video-preview">
+                ${hasVideo ? `<video src="${vidSrc}" controls></video>` : '<div class="placeholder">No video generated yet</div>'}
+            </div>
+            <div class="detail-field" style="margin-top:12px;">
+                <label>Video Prompt</label>
+                <textarea data-field="video_prompt" rows="3">${esc(shot.video_prompt)}</textarea>
+            </div>
+            <div class="btn-group" style="margin-top:8px;">
+                <button class="btn btn-sm ${hasImage ? 'btn-primary' : 'btn-secondary'}" onclick="generateShotVideo(${shot.id})" ${hasImage ? '' : 'disabled'}>Generate Video</button>
+            </div>
+            <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Video status: <strong>${shot.video_generation_status || 'pending'}</strong></div>
         </div>
     </div>`;
 
@@ -576,6 +601,26 @@ async function generateShot(shotId) {
     }
 }
 
+async function generateShotVideo(shotId) {
+    try {
+        toast('Generating video...', 'info');
+        await API.generateShotVideo(shotId);
+    } catch(e) {
+        toast('Video generation failed: ' + e.message, 'error');
+    }
+}
+
+async function generateAllVideos() {
+    const story = State.get('currentStory');
+    if (!story) return;
+    try {
+        toast('Generating all videos...', 'info');
+        await API.generateAllVideos(story.id);
+    } catch(e) {
+        toast('Video generation failed: ' + e.message, 'error');
+    }
+}
+
 async function generateAll() {
     const story = State.get('currentStory');
     if (!story) return;
@@ -634,6 +679,22 @@ function handleWSMessage(data) {
     } else if (data.type === 'generation_complete') {
         toast('Generation batch complete!', 'success');
         refreshCurrentStory();
+    } else if (data.type === 'video_progress') {
+        const story = State.get('currentStory');
+        if (!story) return;
+        const shot = findShot(story, data.shot_id);
+        if (shot) {
+            shot.video_generation_status = data.status;
+            if (data.video) shot.current_video = data.video;
+            renderShotCards();
+            if (State.get('selectedShot') === data.shot_id) renderDetailPanel();
+        }
+    } else if (data.type === 'video_generation_scene_complete') {
+        toast('Scene video sequence complete!', 'success');
+        refreshCurrentStory();
+    } else if (data.type === 'video_generation_complete') {
+        toast('All videos generated!', 'success');
+        refreshCurrentStory();
     } else if (data.type === 'breakdown_progress') {
         const breakingDown = State.get('breakingDownScenes');
         if (data.status === 'started') {
@@ -676,6 +737,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-breakdown').onclick = breakdownAll;
     document.getElementById('btn-prompts').onclick = buildPrompts;
     document.getElementById('btn-generate').onclick = generateAll;
+    document.getElementById('btn-generate-videos').onclick = generateAllVideos;
 
     // WebSocket
     WS.connect();
@@ -684,7 +746,74 @@ document.addEventListener('DOMContentLoaded', () => {
     // World Bible UI
     WorldBibleUI.init();
 
+    // Resize handles
+    initResizeHandles();
+    restoreLaneHeights();
+
     // Load stories
     loadStories();
     showView('create');
 });
+
+// ===== Resizable Timeline Lanes =====
+function initResizeHandles() {
+    document.querySelectorAll('.resize-handle').forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const aboveId = handle.dataset.above;
+            const belowId = handle.dataset.below;
+            const aboveEl = document.getElementById(aboveId);
+            const belowEl = document.getElementById(belowId);
+            if (!aboveEl || !belowEl) return;
+
+            const startY = e.clientY;
+            const startAboveH = aboveEl.offsetHeight;
+            const startBelowH = belowEl.offsetHeight;
+            const minH = 60;
+
+            handle.classList.add('dragging');
+
+            function onMove(e) {
+                const delta = e.clientY - startY;
+                const newAbove = Math.max(minH, startAboveH + delta);
+                const newBelow = Math.max(minH, startBelowH - delta);
+                // Only apply if both above minimum
+                if (newAbove >= minH && newBelow >= minH) {
+                    aboveEl.style.height = newAbove + 'px';
+                    belowEl.style.height = newBelow + 'px';
+                }
+            }
+
+            function onUp() {
+                handle.classList.remove('dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                saveLaneHeights();
+            }
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    });
+}
+
+function saveLaneHeights() {
+    const ids = ['lane-source', 'lane-scenes', 'lane-shots', 'detail-panel'];
+    const heights = {};
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) heights[id] = el.offsetHeight;
+    });
+    try { localStorage.setItem('storybook-lane-heights', JSON.stringify(heights)); } catch(e) {}
+}
+
+function restoreLaneHeights() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('storybook-lane-heights'));
+        if (!saved) return;
+        Object.entries(saved).forEach(([id, h]) => {
+            const el = document.getElementById(id);
+            if (el && h >= 60) el.style.height = h + 'px';
+        });
+    } catch(e) {}
+}
