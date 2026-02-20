@@ -19,16 +19,16 @@ async def generate_video(
     image_url: str | None = None,
     duration: int = 5,
     api_key: str = "",
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """Generate a 9:16 video via Grok Imagine Video API.
 
-    Returns the relative file path (from generated/) on success, None on failure.
+    Returns (file_path, error_message). file_path is relative from generated/.
     image_url can be a base64 data URI or a public URL for image-to-video.
     """
     key = api_key or XAI_API_KEY
     if not key:
         print(f"[grok_video] No API key for shot {shot_id}")
-        return None
+        return None, "No XAI_API_KEY set. Add XAI_API_KEY=xai-... to your .env file"
 
     try:
         payload = {
@@ -58,26 +58,28 @@ async def generate_video(
             if "data" in result and result["data"]:
                 video_url = result["data"][0].get("url")
                 if video_url:
-                    return await _download_video(video_url, shot_id, key)
+                    path, err = await _download_video(video_url, shot_id, key)
+                    return path, err
 
             # Async pattern: poll for completion
             request_id = result.get("id") or result.get("request_id")
             if not request_id:
                 print(f"[grok_video] No request_id in response for shot {shot_id}")
-                return None
+                return None, "No request_id in API response"
 
-            video_url = await _poll_for_completion(request_id, key)
+            video_url, poll_err = await _poll_for_completion(request_id, key)
             if video_url:
-                return await _download_video(video_url, shot_id, key)
+                path, err = await _download_video(video_url, shot_id, key)
+                return path, err
 
-            return None
+            return None, poll_err or "Video generation failed"
 
     except (httpx.HTTPError, KeyError, IndexError) as e:
         print(f"[grok_video] Generation failed for shot {shot_id}: {e}")
-        return None
+        return None, f"Grok video API error: {e}"
 
 
-async def _poll_for_completion(request_id: str, api_key: str) -> str | None:
+async def _poll_for_completion(request_id: str, api_key: str) -> tuple[str | None, str | None]:
     """Poll the API until the video is ready or timeout."""
     elapsed = 0
     async with httpx.AsyncClient(timeout=30) as client:
@@ -97,21 +99,21 @@ async def _poll_for_completion(request_id: str, api_key: str) -> str | None:
                 if status == "completed" or status == "succeeded":
                     items = data.get("data", [])
                     if items:
-                        return items[0].get("url")
-                    return None
+                        return items[0].get("url"), None
+                    return None, "No video URL in completed response"
                 elif status in ("failed", "error"):
                     print(f"[grok_video] Generation failed: {data}")
-                    return None
+                    return None, f"Video generation failed: {data.get('error', status)}"
                 # else: still processing, keep polling
             except httpx.HTTPError as e:
                 print(f"[grok_video] Poll error: {e}")
                 # Continue polling on transient errors
 
     print(f"[grok_video] Timeout waiting for request {request_id}")
-    return None
+    return None, f"Video generation timed out after {POLL_TIMEOUT}s"
 
 
-async def _download_video(video_url: str, shot_id: int, api_key: str) -> str | None:
+async def _download_video(video_url: str, shot_id: int, api_key: str) -> tuple[str | None, str | None]:
     """Download completed video to local storage."""
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -124,10 +126,10 @@ async def _download_video(video_url: str, shot_id: int, api_key: str) -> str | N
             with open(filepath, "wb") as f:
                 f.write(resp.content)
 
-            return f"videos/{filename}"
+            return f"videos/{filename}", None
     except httpx.HTTPError as e:
         print(f"[grok_video] Download failed for shot {shot_id}: {e}")
-        return None
+        return None, f"Video download failed: {e}"
 
 
 def extract_last_frame(video_path: str | Path, output_path: str | Path) -> bool:

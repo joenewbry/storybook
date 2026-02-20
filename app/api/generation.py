@@ -1,11 +1,13 @@
-"""Image and video generation endpoints."""
+"""Image, video, transition, and shot map generation endpoints."""
 
 import asyncio
 from fastapi import APIRouter, HTTPException
 from app.database import get_session, SessionLocal
-from app.models import Story, Scene, Shot, WorldBible
+from app.models import Story, Scene, Shot, SceneAsset, WorldBible
 from app.services.prompt_builder import build_image_prompt, build_video_prompt
 from app.services.grok_video import image_to_base64_data_uri
+from app.services.transitions import suggest_transitions
+from app.services.shot_map import build_shot_map_prompt
 from app.services.queue import generation_queue
 from app.config import GENERATED_DIR
 
@@ -323,3 +325,82 @@ async def generate_all_videos(story_id: int):
         asyncio.create_task(_run())
 
     return {"ok": True, "scenes": len(all_scene_shots), "total_shots": total}
+
+
+# ===== Transition Endpoints =====
+
+@router.post("/api/scenes/{scene_id}/suggest-transitions")
+def suggest_scene_transitions(scene_id: int):
+    """Return transition suggestions without applying them."""
+    session = get_session()
+    try:
+        scene = session.query(Scene).get(scene_id)
+        if not scene:
+            raise HTTPException(404, "Scene not found")
+
+        sorted_shots = sorted(scene.shots, key=lambda s: s.order_index)
+        if len(sorted_shots) < 2:
+            return {"ok": True, "suggestions": []}
+
+        shots_dicts = [s.to_dict() for s in sorted_shots]
+        scene_dict = scene.to_dict()
+        suggestions = suggest_transitions(shots_dicts, scene_dict)
+        return {"ok": True, "suggestions": suggestions}
+    finally:
+        session.close()
+
+
+@router.post("/api/scenes/{scene_id}/apply-transitions")
+def apply_scene_transitions(scene_id: int):
+    """Suggest transitions and write them to the database."""
+    session = get_session()
+    try:
+        scene = session.query(Scene).get(scene_id)
+        if not scene:
+            raise HTTPException(404, "Scene not found")
+
+        sorted_shots = sorted(scene.shots, key=lambda s: s.order_index)
+        if len(sorted_shots) < 2:
+            return {"ok": True, "applied": 0, "suggestions": []}
+
+        shots_dicts = [s.to_dict() for s in sorted_shots]
+        scene_dict = scene.to_dict()
+        suggestions = suggest_transitions(shots_dicts, scene_dict)
+
+        for sug in suggestions:
+            shot = session.query(Shot).get(sug["from_shot_id"])
+            if shot:
+                shot.transition_type = sug["suggested_type"]
+                shot.transition_duration = sug["suggested_duration"]
+
+        session.commit()
+        return {"ok": True, "applied": len(suggestions), "suggestions": suggestions}
+    finally:
+        session.close()
+
+
+# ===== Shot Map Endpoint =====
+
+@router.post("/api/scenes/{scene_id}/generate-shot-map")
+async def generate_scene_shot_map(scene_id: int):
+    """Build prompt and fire async shot map generation."""
+    session = get_session()
+    try:
+        scene = session.query(Scene).get(scene_id)
+        if not scene:
+            raise HTTPException(404, "Scene not found")
+
+        sorted_shots = sorted(scene.shots, key=lambda s: s.order_index)
+        if not sorted_shots:
+            raise HTTPException(400, "Scene has no shots")
+
+        shots_dicts = [s.to_dict() for s in sorted_shots]
+        scene_dict = scene.to_dict()
+        prompt = build_shot_map_prompt(scene_dict, shots_dicts)
+    finally:
+        session.close()
+
+    asyncio.create_task(
+        generation_queue.generate_shot_map(scene_id, prompt, SessionLocal)
+    )
+    return {"ok": True, "scene_id": scene_id}

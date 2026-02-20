@@ -119,6 +119,25 @@ def _do_breakdown_scene(scene_id: int, story_context: dict, world_bible: dict | 
             session.add(shot)
 
         session.commit()
+
+        # Auto-apply intelligent transitions
+        try:
+            from app.services.transitions import suggest_transitions
+            scene = session.query(Scene).get(scene_id)
+            if scene and scene.shots and len(scene.shots) >= 2:
+                sorted_shots = sorted(scene.shots, key=lambda s: s.order_index)
+                shots_dicts = [s.to_dict() for s in sorted_shots]
+                scene_dict = scene.to_dict()
+                suggestions = suggest_transitions(shots_dicts, scene_dict)
+                for sug in suggestions:
+                    shot = session.query(Shot).get(sug["from_shot_id"])
+                    if shot:
+                        shot.transition_type = sug["suggested_type"]
+                        shot.transition_duration = sug["suggested_duration"]
+                session.commit()
+        except Exception:
+            pass  # Don't fail breakdown if transitions fail
+
         return scene_id, shots_data
     except Exception as e:
         session.rollback()

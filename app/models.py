@@ -90,8 +90,15 @@ class Scene(Base):
     chapter = relationship("Chapter", back_populates="scenes")
     shots = relationship("Shot", back_populates="scene", cascade="all, delete-orphan",
                          order_by="Shot.order_index")
+    scene_assets = relationship("SceneAsset", back_populates="scene", cascade="all, delete-orphan")
 
     def to_dict(self):
+        shot_map = None
+        if self.scene_assets:
+            for sa in self.scene_assets:
+                if sa.asset_type == "shot_map" and sa.is_current:
+                    shot_map = sa.to_dict()
+                    break
         return {
             "id": self.id, "chapter_id": self.chapter_id,
             "order_index": self.order_index, "scene_type": self.scene_type,
@@ -101,6 +108,7 @@ class Scene(Base):
             "opening_emotion": self.opening_emotion, "closing_emotion": self.closing_emotion,
             "intensity": self.intensity, "target_duration": self.target_duration,
             "shot_count": len(self.shots) if self.shots else 0,
+            "shot_map": shot_map,
         }
 
 
@@ -180,6 +188,29 @@ class Asset(Base):
     def to_dict(self):
         return {
             "id": self.id, "shot_id": self.shot_id,
+            "asset_type": self.asset_type, "file_path": self.file_path,
+            "generation_params": self.generation_params,
+            "is_current": self.is_current,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SceneAsset(Base):
+    __tablename__ = "scene_assets"
+
+    id = Column(Integer, primary_key=True)
+    scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=False)
+    asset_type = Column(String(50), default="shot_map")  # shot_map
+    file_path = Column(String(500), default="")
+    generation_params = Column(JSON, default=dict)
+    is_current = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    scene = relationship("Scene", back_populates="scene_assets")
+
+    def to_dict(self):
+        return {
+            "id": self.id, "scene_id": self.scene_id,
             "asset_type": self.asset_type, "file_path": self.file_path,
             "generation_params": self.generation_params,
             "is_current": self.is_current,

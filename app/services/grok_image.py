@@ -7,14 +7,14 @@ from app.config import XAI_API_KEY, IMAGES_DIR
 API_URL = "https://api.x.ai/v1/images/generations"
 
 
-async def generate_image(prompt: str, shot_id: int, api_key: str = "") -> str | None:
+async def generate_image(prompt: str, shot_id: int, api_key: str = "") -> tuple[str | None, str | None]:
     """Generate a 9:16 image via Grok Imagine API.
 
-    Returns the relative file path (from generated/) on success, None on failure.
+    Returns (file_path, error_message). file_path is relative from generated/.
     """
     key = api_key or XAI_API_KEY
     if not key:
-        return None
+        return None, "No XAI_API_KEY set. Add XAI_API_KEY=xai-... to your .env file"
 
     try:
         async with httpx.AsyncClient(timeout=90) as client:
@@ -46,8 +46,8 @@ async def generate_image(prompt: str, shot_id: int, api_key: str = "") -> str | 
                 f.write(img_response.content)
 
             # Return relative path from generated/
-            return f"images/{filename}"
+            return f"images/{filename}", None
 
     except (httpx.HTTPError, KeyError, IndexError) as e:
         print(f"Grok image generation failed for shot {shot_id}: {e}")
-        return None
+        return None, f"Grok API error: {e}"

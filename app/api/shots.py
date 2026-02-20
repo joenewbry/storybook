@@ -25,6 +25,7 @@ class ShotUpdate(BaseModel):
     transition_type: str | None = None
     transition_duration: float | None = None
     image_prompt: str | None = None
+    video_prompt: str | None = None
 
 
 @router.get("/{shot_id}")

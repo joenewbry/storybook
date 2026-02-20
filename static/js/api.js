@@ -44,6 +44,13 @@ const API = {
     generateSceneVideos(sceneId) { return this._fetch(`/api/scenes/${sceneId}/generate-video-sequence`, { method: 'POST' }); },
     generateAllVideos(storyId) { return this._fetch(`/api/stories/${storyId}/generate-all-videos`, { method: 'POST' }); },
 
+    // Transitions
+    suggestTransitions(sceneId) { return this._fetch(`/api/scenes/${sceneId}/suggest-transitions`, { method: 'POST' }); },
+    applyTransitions(sceneId) { return this._fetch(`/api/scenes/${sceneId}/apply-transitions`, { method: 'POST' }); },
+
+    // Shot Map
+    generateShotMap(sceneId) { return this._fetch(`/api/scenes/${sceneId}/generate-shot-map`, { method: 'POST' }); },
+
     // Composition
     composeScene(sceneId) { return this._fetch(`/api/scenes/${sceneId}/compose`, { method: 'POST' }); },
 

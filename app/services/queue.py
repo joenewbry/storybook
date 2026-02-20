@@ -29,9 +29,9 @@ class GenerationQueue:
                 "status": "generating",
             })
 
-            result = await generate_image(prompt, shot_id)
+            path, error = await generate_image(prompt, shot_id)
 
-            if result:
+            if path:
                 # Update DB
                 from app.models import Shot, Asset
                 session = session_factory()
@@ -46,7 +46,7 @@ class GenerationQueue:
                         asset = Asset(
                             shot_id=shot_id,
                             asset_type="image",
-                            file_path=result,
+                            file_path=path,
                             generation_params={"prompt": prompt},
                             is_current=True,
                         )
@@ -74,11 +74,12 @@ class GenerationQueue:
                         "type": "shot_progress",
                         "shot_id": shot_id,
                         "status": "error",
+                        "error_message": error or "Unknown error",
                     })
                 finally:
                     session.close()
 
-            return result
+            return path
 
     async def generate_batch(self, shots: list[dict], session_factory):
         """Generate images for multiple shots concurrently.
@@ -108,9 +109,9 @@ class GenerationQueue:
                 "status": "generating",
             })
 
-            result = await generate_video(prompt, shot_id, image_url=image_url, duration=duration)
+            path, error = await generate_video(prompt, shot_id, image_url=image_url, duration=duration)
 
-            if result:
+            if path:
                 from app.models import Shot, Asset
                 session = session_factory()
                 try:
@@ -124,7 +125,7 @@ class GenerationQueue:
                         asset = Asset(
                             shot_id=shot_id,
                             asset_type="video",
-                            file_path=result,
+                            file_path=path,
                             generation_params={"prompt": prompt, "image_url": image_url[:100] if image_url else None},
                             is_current=True,
                         )
@@ -151,11 +152,12 @@ class GenerationQueue:
                         "type": "video_progress",
                         "shot_id": shot_id,
                         "status": "error",
+                        "error_message": error or "Unknown error",
                     })
                 finally:
                     session.close()
 
-            return result
+            return path
 
     async def generate_scene_video_sequence(
         self, scene_shots: list[dict], session_factory,
@@ -195,6 +197,57 @@ class GenerationQueue:
             "type": "video_generation_scene_complete",
             "scene_shot_ids": [s["shot_id"] for s in sorted_shots],
         })
+
+    async def generate_shot_map(self, scene_id: int, prompt: str, session_factory):
+        """Generate a shot map image for a scene."""
+        async with self._semaphore:
+            await asyncio.sleep(INTERVAL)
+
+            await ws_manager.broadcast({
+                "type": "shot_map_progress",
+                "scene_id": scene_id,
+                "status": "generating",
+            })
+
+            from app.services.shot_map import generate_shot_map_image
+            path, error = await generate_shot_map_image(prompt, scene_id)
+
+            if path:
+                from app.models import SceneAsset
+                session = session_factory()
+                try:
+                    # Mark old shot maps as not current
+                    old_maps = session.query(SceneAsset).filter_by(
+                        scene_id=scene_id, asset_type="shot_map"
+                    ).all()
+                    for m in old_maps:
+                        m.is_current = False
+
+                    asset = SceneAsset(
+                        scene_id=scene_id,
+                        asset_type="shot_map",
+                        file_path=path,
+                        generation_params={"prompt": prompt},
+                        is_current=True,
+                    )
+                    session.add(asset)
+                    session.commit()
+
+                    await ws_manager.broadcast({
+                        "type": "shot_map_progress",
+                        "scene_id": scene_id,
+                        "status": "complete",
+                        "shot_map": asset.to_dict(),
+                    })
+                finally:
+                    session.close()
+            else:
+                await ws_manager.broadcast({
+                    "type": "shot_map_progress",
+                    "scene_id": scene_id,
+                    "status": "error",
+                    "error_message": error or "Unknown error",
+                })
 
 
 generation_queue = GenerationQueue()

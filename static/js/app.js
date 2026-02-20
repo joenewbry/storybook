@@ -12,6 +12,56 @@ function toast(msg, type = 'info') {
     setTimeout(() => el.remove(), 4000);
 }
 
+// ===== Timer System =====
+const ActiveTimers = {};
+const TIMER_ESTIMATES = {
+    breakdown: 15, shot: 12, video: 60, shotmap: 15,
+};
+const FUN_MESSAGES = [
+    "Almost there... probably",
+    "Teaching the AI to paint faster...",
+    "Rome wasn't rendered in a day",
+    "The AI is having an artistic moment",
+    "Generating pixels with extra love...",
+    "Worth the wait, trust us",
+    "Convincing electrons to cooperate...",
+    "The hamsters are running as fast as they can",
+];
+
+function startTimer(key, estimateSec) {
+    stopTimer(key); // clear any existing
+    const entry = { startTime: Date.now(), estimate: estimateSec, intervalId: null, funIdx: 0 };
+    entry.intervalId = setInterval(() => {
+        // Rotate fun message every 5s when over estimate
+        const elapsed = (Date.now() - entry.startTime) / 1000;
+        if (elapsed > entry.estimate) {
+            entry.funIdx = Math.floor(elapsed / 5) % FUN_MESSAGES.length;
+        }
+        renderTimeline(); // re-render to update timer displays
+    }, 1000);
+    ActiveTimers[key] = entry;
+}
+
+function stopTimer(key) {
+    if (ActiveTimers[key]) {
+        clearInterval(ActiveTimers[key].intervalId);
+        delete ActiveTimers[key];
+    }
+}
+
+function getTimerHTML(key) {
+    const t = ActiveTimers[key];
+    if (!t) return '';
+    const elapsed = Math.round((Date.now() - t.startTime) / 1000);
+    const over = elapsed - t.estimate;
+    if (over <= 0) {
+        return `<span class="timer-text">${elapsed}s / ~${t.estimate}s</span>`;
+    } else {
+        const msg = FUN_MESSAGES[t.funIdx || 0];
+        return `<span class="timer-text timer-over">${msg} (${elapsed}s)</span>`;
+    }
+}
+
 // ===== View Management =====
 function showView(name) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -188,6 +238,16 @@ function renderSceneCards(story) {
     const breakingDown = State.get('breakingDownScenes');
     const allScenes = story.chapters.flatMap(ch => ch.scenes);
 
+    if (allScenes.length === 0) {
+        el.innerHTML = `<div class="segment-cta">
+            <div class="segment-cta-icon">&#9998;</div>
+            <div class="segment-cta-text">Step 1: Segment your story into scenes</div>
+            <div class="segment-cta-sub">Break the story into chapters and scenes for visual planning.</div>
+            <button class="btn btn-primary" onclick="segmentStory()">Segment Story</button>
+        </div>`;
+        return;
+    }
+
     el.innerHTML = allScenes.map(sc => {
         const width = Math.max(180, sc.target_duration * 5);
         const bgGrad = getEmotionGradient(sc.opening_emotion, sc.closing_emotion);
@@ -205,8 +265,10 @@ function renderSceneCards(story) {
             : '<span class="scene-type-badge scene">Scene</span>';
 
         // Shot status display
+        const timerKey = `breakdown_${sc.id}`;
+        const timerHtml = isBreakingDown ? getTimerHTML(timerKey) : '';
         const shotStatus = isBreakingDown
-            ? '<span class="shot-status breaking"><span class="spinner-sm"></span> Breaking down...</span>'
+            ? `<span class="shot-status breaking"><span class="spinner-sm"></span> Breaking down... ${timerHtml}</span>`
             : hasShots
                 ? `<span class="shot-status has-shots">${sc.shot_count} shots</span>`
                 : `<span class="shot-status no-shots">No shots</span>`;
@@ -284,9 +346,12 @@ function renderShotCards() {
 
     // Show loading spinner if scene is being broken down
     if (scene && (!scene.shots || scene.shots.length === 0) && breakingDown.has(selectedScene)) {
+        const bdTimerKey = `breakdown_${selectedScene}`;
+        const bdTimerHtml = getTimerHTML(bdTimerKey);
         el.innerHTML = `<div class="breakdown-loading">
             <div class="spinner"></div>
             <div class="breakdown-loading-text">Breaking down scene into shots...</div>
+            ${bdTimerHtml ? `<div class="breakdown-loading-timer">${bdTimerHtml}</div>` : ''}
             <div class="breakdown-loading-sub">Claude is analyzing the scene for visual direction, camera angles, and color scripting.</div>
         </div>`;
         return;
@@ -297,19 +362,35 @@ function renderShotCards() {
         return;
     }
 
-    el.innerHTML = scene.shots.map(sh => {
+    // Transition type icons and colors
+    const TRANS_ICONS = {
+        'cut': '/', 'dissolve': '~', 'fade': '...', 'wipe': '>',
+        'match-cut': '=', 'whip-pan': '>>', 'j-cut': 'J', 'l-cut': 'L',
+        'smash-cut': '!', 'iris': 'O',
+    };
+
+    // Build interleaved shot cards + transition connectors
+    let html = '';
+    scene.shots.forEach((sh, idx) => {
         const hasImage = sh.current_image && sh.current_image.file_path;
         const hasVideo = sh.current_video && sh.current_video.file_path;
         const imgSrc = hasImage ? `/generated/${sh.current_image.file_path}` : '';
         const swatches = (sh.color_palette || []).map(c => `<div class="swatch" style="background:${c}"></div>`).join('');
-        const transColor = { dissolve: 'var(--blue)', fade: 'var(--text-dim)', wipe: 'var(--orange)', cut: 'transparent' };
         const vidStatus = sh.video_generation_status || 'pending';
-        return `
+
+        // Timer and error info for shot cards
+        const imgTimerKey = `shot_${sh.id}`;
+        const vidTimerKey = `video_${sh.id}`;
+        const imgTimerHtml = sh.generation_status === 'generating' ? getTimerHTML(imgTimerKey) : '';
+        const vidTimerHtml = vidStatus === 'generating' ? getTimerHTML(vidTimerKey) : '';
+        const errorTooltip = sh.generation_status === 'error' && sh.error_message ? ` title="${esc(sh.error_message)}"` : '';
+
+        html += `
         <div class="shot-card ${selectedShot === sh.id ? 'selected' : ''}" data-id="${sh.id}" draggable="true">
             <div class="thumb">
                 ${hasImage ? `<img src="${imgSrc}" alt="Shot ${sh.order_index + 1}">` : '&#9633;'}
                 <div class="duration-badge">${sh.duration}s</div>
-                <div class="status-dot ${sh.generation_status}"></div>
+                <div class="status-dot ${sh.generation_status}"${errorTooltip}></div>
                 <button class="shot-card-gen-btn" onclick="event.stopPropagation(); generateShot(${sh.id})" title="Generate Image">&#9654;</button>
                 ${hasImage ? `<button class="shot-card-vid-btn ${vidStatus === 'generating' ? 'generating' : ''}" onclick="event.stopPropagation(); generateShotVideo(${sh.id})" title="Generate Video">&#9654;&#9654;</button>` : ''}
             </div>
@@ -317,12 +398,68 @@ function renderShotCards() {
                 <div class="shot-type">${sh.shot_type || 'shot'} ${sh.order_index + 1}${hasVideo ? ' <span style="color:var(--green)">&#9658;</span>' : ''}</div>
                 <div class="shot-desc">${sh.description || ''}</div>
                 <div class="color-swatches">${swatches}</div>
+                ${imgTimerHtml ? `<div class="shot-card-timer">${imgTimerHtml}</div>` : ''}
+                ${vidTimerHtml ? `<div class="shot-card-timer">${vidTimerHtml}</div>` : ''}
             </div>
-            <div class="transition-indicator" style="background:${transColor[sh.transition_type] || 'transparent'}"></div>
         </div>`;
-    }).join('');
 
-    // Click and drag handlers
+        // Add transition connector between shots (not after last)
+        if (idx < scene.shots.length - 1) {
+            const transType = sh.transition_type || 'cut';
+            const icon = TRANS_ICONS[transType] || '/';
+            html += `
+            <div class="transition-connector" data-from-shot="${sh.id}" data-to-shot="${scene.shots[idx + 1].id}">
+                <div class="connector-line"></div>
+                <div class="connector-badge" data-type="${transType}" title="${transType}">${icon}</div>
+                <div class="connector-label">${transType}</div>
+            </div>`;
+        }
+    });
+    el.innerHTML = html;
+
+    // Click handlers for transition connectors
+    el.querySelectorAll('.transition-connector').forEach(conn => {
+        conn.onclick = (e) => {
+            e.stopPropagation();
+            // Close any existing dropdown
+            document.querySelectorAll('.transition-dropdown').forEach(d => d.remove());
+
+            const fromShotId = parseInt(conn.dataset.fromShot);
+            const dropdown = document.createElement('div');
+            dropdown.className = 'transition-dropdown';
+            const types = ['cut','dissolve','fade','wipe','match-cut','whip-pan','j-cut','l-cut','smash-cut','iris'];
+            dropdown.innerHTML = types.map(t => `
+                <div class="transition-dropdown-item" data-type="${t}">
+                    <span class="td-icon">${TRANS_ICONS[t]}</span>
+                    <span>${t}</span>
+                </div>
+            `).join('');
+            conn.appendChild(dropdown);
+
+            dropdown.querySelectorAll('.transition-dropdown-item').forEach(item => {
+                item.onclick = async (ev) => {
+                    ev.stopPropagation();
+                    const type = item.dataset.type;
+                    const dur = {cut:0,dissolve:1,fade:1.5,wipe:0.8,'match-cut':0,'whip-pan':0.3,'j-cut':0.5,'l-cut':0.5,'smash-cut':0,'iris':0.8}[type] || 0;
+                    try {
+                        await API.updateShot(fromShotId, { transition_type: type, transition_duration: dur });
+                        await refreshCurrentStory();
+                    } catch(err) { toast('Failed to update transition: ' + err.message, 'error'); }
+                    dropdown.remove();
+                };
+            });
+
+            // Close on outside click
+            setTimeout(() => {
+                document.addEventListener('click', function closer() {
+                    dropdown.remove();
+                    document.removeEventListener('click', closer);
+                }, { once: true });
+            }, 0);
+        };
+    });
+
+    // Click and drag handlers for shot cards only
     el.querySelectorAll('.shot-card').forEach(card => {
         card.onclick = () => {
             State.set('selectedShot', parseInt(card.dataset.id));
@@ -394,6 +531,49 @@ function renderSceneDetail(el, scene) {
     const breakingDown = State.get('breakingDownScenes');
     const isBreaking = breakingDown.has(scene.id);
 
+    // Workflow step status
+    const hasShots = scene.shot_count > 0;
+    const shots = scene.shots || [];
+    const hasPrompts = shots.some(sh => sh.image_prompt);
+    const hasImages = shots.some(sh => sh.current_image && sh.current_image.file_path);
+    const hasVideos = shots.some(sh => sh.current_video && sh.current_video.file_path);
+
+    function stepIcon(done, ready) {
+        if (done) return '<span class="wf-icon wf-done">&#10003;</span>';
+        if (ready) return '<span class="wf-icon wf-ready">&#9679;</span>';
+        return '<span class="wf-icon wf-pending">&#9675;</span>';
+    }
+
+    const workflowHtml = `
+        <div class="workflow-steps">
+            <div class="workflow-title">Pipeline</div>
+            <div class="wf-step">
+                ${stepIcon(true, true)}
+                <span class="wf-label">Segment Story</span>
+            </div>
+            <div class="wf-step">
+                ${stepIcon(hasShots, !hasShots)}
+                <span class="wf-label">Break Down Shots</span>
+                ${!hasShots && !isBreaking ? `<button class="btn btn-sm btn-secondary wf-btn" onclick="breakdownScene(${scene.id})">Break Down</button>` : ''}
+                ${isBreaking ? '<span class="spinner-sm"></span>' : ''}
+            </div>
+            <div class="wf-step">
+                ${stepIcon(hasPrompts, hasShots && !hasPrompts)}
+                <span class="wf-label">Build Prompts</span>
+                ${hasShots && !hasPrompts ? `<button class="btn btn-sm btn-secondary wf-btn" onclick="buildPrompts()">Build</button>` : ''}
+            </div>
+            <div class="wf-step">
+                ${stepIcon(hasImages, hasPrompts && !hasImages)}
+                <span class="wf-label">Generate Images</span>
+                ${hasPrompts && !hasImages ? `<button class="btn btn-sm btn-secondary wf-btn" onclick="generateAll()">Generate</button>` : ''}
+            </div>
+            <div class="wf-step">
+                ${stepIcon(hasVideos, hasImages && !hasVideos)}
+                <span class="wf-label">Generate Videos</span>
+                ${hasImages && !hasVideos ? `<button class="btn btn-sm btn-secondary wf-btn" onclick="generateAllVideos()">Generate</button>` : ''}
+            </div>
+        </div>`;
+
     el.innerHTML = `
     <div class="detail-content">
         <div class="detail-left">
@@ -412,12 +592,23 @@ function renderSceneDetail(el, scene) {
             <div class="detail-field"><label>Duration (seconds)</label><input type="number" data-field="target_duration" value="${scene.target_duration}"></div>
         </div>
         <div class="detail-right">
-            <h3>Source Text</h3>
-            <div style="background:var(--surface2);padding:12px;border-radius:var(--radius);font-size:13px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap;">${esc(scene.source_text)}</div>
+            ${workflowHtml}
+
+            <h3 style="margin-top:16px;">Source Text</h3>
+            <div style="background:var(--surface2);padding:12px;border-radius:var(--radius);font-size:13px;line-height:1.6;max-height:200px;overflow-y:auto;white-space:pre-wrap;">${esc(scene.source_text)}</div>
             <div style="margin-top:12px;" class="btn-group">
                 <button class="btn btn-secondary btn-sm" onclick="breakdownScene(${scene.id})" ${isBreaking ? 'disabled' : ''}>
                     ${isBreaking ? '<span class="spinner-sm"></span> Breaking Down...' : 'Break Down Shots'}
                 </button>
+                <button class="btn btn-secondary btn-sm" onclick="suggestTransitions(${scene.id})" ${scene.shot_count < 2 ? 'disabled' : ''}>Suggest Transitions</button>
+            </div>
+
+            <h3 style="margin-top:16px;">Shot Map</h3>
+            <div class="shot-map-preview">
+                ${scene.shot_map ? `<img src="/generated/${scene.shot_map.file_path}">` : '<div class="placeholder">No shot map generated yet</div>'}
+            </div>
+            <div class="btn-group" style="margin-top:8px;">
+                <button class="btn btn-secondary btn-sm" onclick="generateShotMap(${scene.id})" ${scene.shot_count === 0 ? 'disabled' : ''}>Generate Shot Map</button>
             </div>
         </div>
     </div>`;
@@ -460,7 +651,7 @@ function renderShotDetail(el, shot) {
             <div class="detail-field">
                 <label>Transition</label>
                 <select data-field="transition_type">
-                    ${['cut','dissolve','fade','wipe'].map(t => `<option ${shot.transition_type===t?'selected':''}>${t}</option>`).join('')}
+                    ${['cut','dissolve','fade','wipe','match-cut','whip-pan','j-cut','l-cut','smash-cut','iris'].map(t => `<option ${shot.transition_type===t?'selected':''}>${t}</option>`).join('')}
                 </select>
             </div>
             <h3 style="margin-top:16px;">Music</h3>
@@ -481,7 +672,12 @@ function renderShotDetail(el, shot) {
                 <button class="btn btn-primary btn-sm" onclick="generateShot(${shot.id})">Generate Image</button>
                 <button class="btn btn-secondary btn-sm" onclick="saveShotEdits(${shot.id})">Save Changes</button>
             </div>
-            <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Image status: <strong>${shot.generation_status}</strong></div>
+            ${shot.generation_status === 'generating' ? `<div style="margin-top:6px;">${getTimerHTML('shot_' + shot.id)}</div>` : ''}
+            ${shot.generation_status === 'error' && shot.error_message ? `
+            <div class="error-box">
+                <strong>Generation failed</strong>
+                <p>${esc(shot.error_message)}</p>
+            </div>` : `<div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Image status: <strong>${shot.generation_status}</strong></div>`}
 
             <h3 style="margin-top:20px;">Video</h3>
             <div class="video-preview">
@@ -494,7 +690,12 @@ function renderShotDetail(el, shot) {
             <div class="btn-group" style="margin-top:8px;">
                 <button class="btn btn-sm ${hasImage ? 'btn-primary' : 'btn-secondary'}" onclick="generateShotVideo(${shot.id})" ${hasImage ? '' : 'disabled'}>Generate Video</button>
             </div>
-            <div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Video status: <strong>${shot.video_generation_status || 'pending'}</strong></div>
+            ${(shot.video_generation_status === 'generating') ? `<div style="margin-top:6px;">${getTimerHTML('video_' + shot.id)}</div>` : ''}
+            ${(shot.video_generation_status === 'error' && shot.video_error_message) ? `
+            <div class="error-box">
+                <strong>Video generation failed</strong>
+                <p>${esc(shot.video_error_message)}</p>
+            </div>` : `<div style="margin-top:6px;font-size:11px;color:var(--text-dim);">Video status: <strong>${shot.video_generation_status || 'pending'}</strong></div>`}
         </div>
     </div>`;
 
@@ -610,6 +811,26 @@ async function generateShotVideo(shotId) {
     }
 }
 
+async function suggestTransitions(sceneId) {
+    try {
+        toast('Applying intelligent transitions...', 'info');
+        const result = await API.applyTransitions(sceneId);
+        toast(`Applied ${result.applied} transitions!`, 'success');
+        await refreshCurrentStory();
+    } catch(e) {
+        toast('Transition suggestion failed: ' + e.message, 'error');
+    }
+}
+
+async function generateShotMap(sceneId) {
+    try {
+        toast('Generating shot map...', 'info');
+        await API.generateShotMap(sceneId);
+    } catch(e) {
+        toast('Shot map generation failed: ' + e.message, 'error');
+    }
+}
+
 async function generateAllVideos() {
     const story = State.get('currentStory');
     if (!story) return;
@@ -672,7 +893,14 @@ function handleWSMessage(data) {
         const shot = findShot(story, data.shot_id);
         if (shot) {
             shot.generation_status = data.status;
+            if (data.error_message) shot.error_message = data.error_message;
             if (data.image) shot.current_image = data.image;
+            // Timer management
+            if (data.status === 'generating') {
+                startTimer(`shot_${data.shot_id}`, TIMER_ESTIMATES.shot);
+            } else if (data.status === 'complete' || data.status === 'error') {
+                stopTimer(`shot_${data.shot_id}`);
+            }
             renderShotCards();
             if (State.get('selectedShot') === data.shot_id) renderDetailPanel();
         }
@@ -685,7 +913,14 @@ function handleWSMessage(data) {
         const shot = findShot(story, data.shot_id);
         if (shot) {
             shot.video_generation_status = data.status;
+            if (data.error_message) shot.video_error_message = data.error_message;
             if (data.video) shot.current_video = data.video;
+            // Timer management
+            if (data.status === 'generating') {
+                startTimer(`video_${data.shot_id}`, TIMER_ESTIMATES.video);
+            } else if (data.status === 'complete' || data.status === 'error') {
+                stopTimer(`video_${data.shot_id}`);
+            }
             renderShotCards();
             if (State.get('selectedShot') === data.shot_id) renderDetailPanel();
         }
@@ -699,18 +934,32 @@ function handleWSMessage(data) {
         const breakingDown = State.get('breakingDownScenes');
         if (data.status === 'started') {
             breakingDown.add(data.scene_id);
+            startTimer(`breakdown_${data.scene_id}`, TIMER_ESTIMATES.breakdown);
         } else if (data.status === 'complete') {
             breakingDown.delete(data.scene_id);
+            stopTimer(`breakdown_${data.scene_id}`);
             toast(`Scene breakdown complete! ${data.shot_count} shots created.`, 'success');
             refreshCurrentStory();
         } else if (data.status === 'error') {
             breakingDown.delete(data.scene_id);
+            stopTimer(`breakdown_${data.scene_id}`);
             toast('Breakdown error: ' + (data.error || 'Unknown'), 'error');
         }
         State.set('breakingDownScenes', breakingDown);
         renderSceneCards();
         if (State.get('selectedScene') === data.scene_id) {
             renderShotCards();
+        }
+    } else if (data.type === 'shot_map_progress') {
+        if (data.status === 'generating') {
+            startTimer(`shotmap_${data.scene_id}`, TIMER_ESTIMATES.shotmap);
+        } else if (data.status === 'complete') {
+            stopTimer(`shotmap_${data.scene_id}`);
+            toast('Shot map generated!', 'success');
+            refreshCurrentStory();
+        } else if (data.status === 'error') {
+            stopTimer(`shotmap_${data.scene_id}`);
+            toast('Shot map generation failed' + (data.error_message ? ': ' + data.error_message : ''), 'error');
         }
     } else if (data.type === 'breakdown_all_complete') {
         toast(`All breakdowns complete! ${data.total_shots} total shots.`, 'success');
